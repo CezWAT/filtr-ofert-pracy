@@ -12,6 +12,8 @@ Ukrywanie firm z czarnej listy oraz oznaczanie ofert kolorową ramką zgodnie z 
 - lokalizacja zgodna z wartością CITY i stacjonarnym lub hybrydowym lub zdalnym trybem pracy — zielona ramka;
 - pozostałe przypadki — czerwona ramka.
 
+Dodatkowo podawana jest statystyka w ramce w prawym dolnym rogu.
+
 ## Konfiguracja: 
 - firmy do czarnej listy dodaje się edytując plik i zmieniając wartość zmiennej w skrypcie "portal - czarna lista firm"
 
