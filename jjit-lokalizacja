@@ -1,0 +1,107 @@
+// ==UserScript==
+// @name         Just Join IT - ramki ofert według lokalizacji
+// @namespace    CEER
+// @version      1.1
+// @match        https://justjoin.it/*
+// @match        https://www.justjoin.it/*
+// @run-at       document-idle
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const CITY = 'miasto';
+
+    const offerLinkSelector = 'a.offer_list_offer_title_link[href*="/job-offer/"]';
+    const processedCards = new WeakSet();
+
+    const normalize = value =>
+        (value || '')
+            .toLocaleLowerCase('pl')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+    const targetCity = normalize(CITY);
+
+    function getOfferLinks(element) {
+        return new Set(
+            [...element.querySelectorAll(offerLinkSelector)]
+                .map(link => link.href)
+        );
+    }
+
+    function findWholeCard(link) {
+        let element = link.parentElement;
+        let largestSingleOfferContainer = null;
+
+        // Zapamiętaj najwyższy kontener zawierający tylko tę jedną ofertę.
+        // Gdy trafimy na wspólny kontener wielu ofert, zakończ szukanie.
+        for (let i = 0; i < 12 && element && element !== document.body; i++) {
+            const links = getOfferLinks(element);
+
+            if (links.size > 1) break;
+            if (links.size === 1) largestSingleOfferContainer = element;
+
+            element = element.parentElement;
+        }
+
+        return largestSingleOfferContainer;
+    }
+
+    function processLink(link) {
+        const card = findWholeCard(link);
+        if (!card || processedCards.has(card)) return;
+
+        const text = normalize(card.innerText || card.textContent);
+        if (!text) return;
+
+        const isRemote = /\b(remote|zdaln)\b/i.test(text);
+        const isHybrid = /\b(hybrid|hybryd)\b/i.test(text);
+        const isOnsite = /\b(office|on-?site|stacjonarn)\b/i.test(text);
+        const isTargetCity = text.includes(targetCity);
+
+        let color = null;
+
+        if (isRemote) {
+            color = '#20a34a';
+        } else if (isHybrid || isOnsite) {
+            color = isTargetCity ? '#20a34a' : '#e53935';
+        }
+
+        if (color) {
+            card.style.setProperty('outline', `3px solid ${color}`, 'important');
+            card.style.setProperty('outline-offset', '-3px', 'important');
+        }
+
+        processedCards.add(card);
+    }
+
+    function scan(node) {
+        if (!(node instanceof Element)) return;
+
+        if (node.matches(offerLinkSelector)) {
+            processLink(node);
+        }
+
+        node.querySelectorAll(offerLinkSelector).forEach(processLink);
+    }
+
+    document.querySelectorAll(offerLinkSelector).forEach(processLink);
+
+    const observer = new MutationObserver(mutations => {
+        for (const mutation of mutations) {
+            if (mutation.target instanceof Element) {
+                const link = mutation.target.closest(offerLinkSelector);
+                if (link) processLink(link);
+            }
+
+            mutation.addedNodes.forEach(scan);
+        }
+    });
+
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+})();
