@@ -1,0 +1,189 @@
+// ==UserScript==
+// @name         Just Join IT - czarna lista firm
+// @namespace    CEER
+// @version      1.0
+// @match        https://justjoin.it/*
+// @match        https://www.justjoin.it/*
+// @run-at       document-idle
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const blacklist = [
+        'firma1',
+        'firma2'
+    ];
+
+    // Linki do ofert na Just Join IT.
+    const offerLinkSelector = 'a[href*="/job-offer/"]';
+    const processedCards = new WeakSet();
+    const seenCards = new Set();
+    const hiddenCards = new Set();
+
+    const normalize = value =>
+        (value || '')
+            .toLocaleLowerCase('pl')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+    function getCompanyNames(card) {
+        const names = new Set();
+
+        // Nazwa firmy bywa dostępna w tekście linku lub w logo.
+        card.querySelectorAll('a, img, [title], [aria-label]').forEach(element => {
+            const values = [
+                element.textContent,
+                element.getAttribute('alt'),
+                element.getAttribute('title'),
+                element.getAttribute('aria-label')
+            ];
+
+            for (const value of values) {
+                const name = (value || '').trim();
+                if (name) names.add(name);
+            }
+        });
+
+        return [...names];
+    }
+
+    function createWarning(company) {
+        const warning = document.createElement('div');
+        warning.dataset.blacklistWarning = '1';
+        warning.style.cssText = [
+            'background:#fff3cd',
+            'border:1px solid #ffc107',
+            'border-radius:8px',
+            'padding:8px 12px',
+            'margin:8px 0',
+            'color:#856404',
+            'font-weight:600'
+        ].join(';');
+
+        warning.textContent = `🚫 Ukryto ofertę firmy: ${company}`;
+        return warning;
+    }
+
+    function updateStatus() {
+        let status = document.getElementById('blacklist-script-status');
+
+        if (!status) {
+            status = document.createElement('div');
+            status.id = 'blacklist-script-status';
+            status.style.cssText = [
+                'position:fixed',
+                'right:12px',
+                'bottom:12px',
+                'z-index:2147483647',
+                'background:#222',
+                'color:#fff',
+                'padding:8px 12px',
+                'border-radius:6px',
+                'font:13px/1.4 sans-serif',
+                'box-shadow:0 2px 8px #0005'
+            ].join(';');
+
+            document.body.appendChild(status);
+        }
+
+        status.textContent =
+            `Czarna lista: kart znalezionych: ${seenCards.size}, ukrytych: ${hiddenCards.size}`;
+    }
+  
+		
+  	function findCard(link) {
+    const slug = decodeURIComponent(new URL(link.href).pathname)
+        .split('/')
+        .filter(Boolean)
+        .pop()
+        .toLocaleLowerCase('pl');
+
+    const matchedName = blacklist.find(blockedName => {
+        const blockedSlug = normalize(blockedName)
+            .replace(/[^\p{L}\p{N}]+/gu, '-')
+            .replace(/^-|-$/g, '');
+
+        return slug.includes(blockedSlug);
+    });
+
+    // Jeśli nazwa z czarnej listy nie występuje w adresie tej oferty,
+    // nie szukamy jej w większych kontenerach strony.
+    if (!matchedName) return null;
+
+    let element = link.parentElement;
+
+    for (let i = 0; i < 8 && element && element !== document.body; i++) {
+        const offerLinks = new Set(
+            [...element.querySelectorAll(offerLinkSelector)]
+                .map(a => a.href)
+        );
+
+        // Nie chowaj wspólnego kontenera zawierającego inne oferty.
+        if (offerLinks.size > 1) return null;
+
+        if (offerLinks.size === 1) {
+            return { card: element, matchingName: matchedName };
+        }
+
+        element = element.parentElement;
+    }
+
+    return null;
+}
+
+
+    function processLink(link) {
+        const result = findCard(link);
+        if (!result || processedCards.has(result.card)) return;
+
+        processedCards.add(result.card);
+        seenCards.add(result.card);
+
+        const companyName =
+            getCompanyNames(result.card).find(name =>
+                normalize(name).includes(normalize(result.matchingName))
+            ) || result.matchingName;
+
+        const warning = createWarning(companyName);
+        result.card.parentNode?.insertBefore(warning, result.card);
+        result.card.style.setProperty('display', 'none', 'important');
+        hiddenCards.add(result.card);
+
+        updateStatus();
+    }
+
+    function scan(node) {
+        if (!(node instanceof Element)) return;
+
+        if (node.matches(offerLinkSelector)) processLink(node);
+        node.querySelectorAll(offerLinkSelector).forEach(processLink);
+    }
+
+    document.querySelectorAll(offerLinkSelector).forEach(processLink);
+
+    let pendingNodes = new Set();
+    let scheduled = false;
+
+    const observer = new MutationObserver(mutations => {
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                if (node instanceof Element) pendingNodes.add(node);
+            }
+        }
+
+        if (scheduled || pendingNodes.size === 0) return;
+        scheduled = true;
+
+        requestAnimationFrame(() => {
+            scheduled = false;
+            const nodes = pendingNodes;
+            pendingNodes = new Set();
+            nodes.forEach(scan);
+        });
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+    updateStatus();
+})();
