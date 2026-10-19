@@ -1,0 +1,177 @@
+// ==UserScript==
+// @name         Pracuj.pl - czarna lista firm
+// @namespace    CEER
+// @version      1.5
+// @match        https://www.pracuj.pl/*
+// @match        https://www.it.pracuj.pl/*
+// @run-at       document-idle
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const blacklist = [
+        'firma1',
+        'firma2'
+    ];
+
+    const offerSelector = '#offers-list [data-test-offerid]';
+    const processedOffers = new WeakSet();
+    const seenOffers = new Set();
+    const hiddenOffers = new Set();
+
+    const normalize = value =>
+        (value || '')
+            .toLocaleLowerCase('pl')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+    function getCompanyNames(offer) {
+        return Array.from(
+            offer.querySelectorAll('[data-test="link-company-profile"]')
+        )
+            .map(link =>
+                link.textContent ||
+                link.getAttribute('title') ||
+                ''
+            )
+            .map(name => name.trim())
+            .filter(Boolean);
+    }
+
+    function createWarning(company) {
+        const warning = document.createElement('div');
+
+        warning.dataset.blacklistWarning = '1';
+        warning.style.cssText = [
+            'background:#fff3cd',
+            'border:1px solid #ffc107',
+            'border-radius:8px',
+            'padding:8px 12px',
+            'margin:8px 0',
+            'color:#856404',
+            'font-weight:600'
+        ].join(';');
+
+        warning.textContent = `🚫 Ukryto ofertę firmy: ${company}`;
+        return warning;
+    }
+
+    function updateStatus() {
+        let status = document.getElementById('blacklist-script-status');
+
+        if (!status) {
+            status = document.createElement('div');
+            status.id = 'blacklist-script-status';
+            status.style.cssText = [
+                'position:fixed',
+                'right:12px',
+                'bottom:12px',
+                'z-index:2147483647',
+                'background:#222',
+                'color:#fff',
+                'padding:8px 12px',
+                'border-radius:6px',
+                'font:13px/1.4 sans-serif',
+                'box-shadow:0 2px 8px #0005'
+            ].join(';');
+
+            document.body.appendChild(status);
+        }
+
+        status.textContent =
+            `Czarna lista: kart znalezionych: ${seenOffers.size}, ukrytych: ${hiddenOffers.size}`;
+    }
+
+    function processOffer(offer) {
+        if (processedOffers.has(offer)) {
+            return;
+        }
+
+        const companyNames = getCompanyNames(offer);
+
+        // Jeśli karta jest dodana przed nazwą firmy, spróbujemy ponownie
+        // po kolejnym dodaniu elementów do tej karty.
+        if (companyNames.length === 0) {
+            return;
+        }
+
+        processedOffers.add(offer);
+        seenOffers.add(offer);
+
+        const matchedName = blacklist.find(blockedName =>
+            companyNames.some(companyName =>
+                normalize(companyName).includes(normalize(blockedName))
+            )
+        );
+
+        if (matchedName) {
+            const companyName =
+                companyNames.find(name =>
+                    normalize(name).includes(normalize(matchedName))
+                ) || matchedName;
+
+            offer.parentNode.insertBefore(
+                createWarning(companyName),
+                offer
+            );
+
+            offer.style.setProperty('display', 'none', 'important');
+            hiddenOffers.add(offer);
+        }
+
+        updateStatus();
+    }
+
+    function findOffersIn(node) {
+        if (!(node instanceof Element)) {
+            return;
+        }
+
+        if (node.matches(offerSelector)) {
+            processOffer(node);
+        }
+
+        node.querySelectorAll(offerSelector).forEach(processOffer);
+    }
+
+    // Jednorazowe sprawdzenie ofert już obecnych na stronie.
+    document.querySelectorAll(offerSelector).forEach(processOffer);
+
+    // Obserwujemy wyłącznie dodawanie elementów, nie zmiany tekstu i atrybutów.
+    let pendingNodes = new Set();
+    let scheduled = false;
+
+    const observer = new MutationObserver(mutations => {
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                if (node instanceof Element) {
+                    pendingNodes.add(node);
+                }
+            }
+        }
+
+        if (scheduled || pendingNodes.size === 0) {
+            return;
+        }
+
+        scheduled = true;
+
+        requestAnimationFrame(() => {
+            scheduled = false;
+
+            const nodesToProcess = pendingNodes;
+            pendingNodes = new Set();
+
+            nodesToProcess.forEach(findOffersIn);
+        });
+    });
+
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
+    updateStatus();
+})();
